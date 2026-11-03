@@ -1,0 +1,14 @@
+data/
+*.db
+*.db-shm
+*.db-wal
+app
+tellr
+*.exe
+.env
+.DS_Store
+.verify-*
+.env.*
+*.log
+*.pem
+*.key

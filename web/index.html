@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#2b38f5">
+  <title>TellR</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="stage" aria-label="Talk to TellR">
+      <header class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <h1>TellR</h1>
+        <button id="btn-history" class="hist-btn" type="button">History</button>
+        <div class="pills" aria-live="polite">
+          <span id="pill-api" class="pill pill-wait">Server: connecting</span>
+          <span id="pill-ai" class="pill pill-wait">AI: checking</span>
+        </div>
+      </header>
+
+      <div class="voice">
+        <button id="orb" class="orb" type="button" data-phase="idle" aria-label="Start talking">
+          <span class="ring r1"></span>
+          <span class="ring r2"></span>
+          <svg class="mic" viewBox="0 0 24 24" width="44" height="44" aria-hidden="true" focusable="false">
+            <path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15z" fill="currentColor"/>
+            <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+          </svg>
+          <span class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="spin" aria-hidden="true"></span>
+        </button>
+        <p id="orb-label" class="orb-label">Tap and speak</p>
+        <p id="heard" class="heard" aria-live="polite">Try: “I spent 250 on lunch”</p>
+      </div>
+
+      <div id="confirm-bar" class="confirm" role="alertdialog" aria-labelledby="confirm-text" hidden>
+        <p id="confirm-text"></p>
+        <div class="row">
+          <button id="btn-no" class="btn ghost-light" type="button">No, keep it</button>
+          <button id="btn-yes" class="btn coral" type="button">Yes, delete</button>
+        </div>
+      </div>
+
+      <form id="form-type" class="type-form" novalidate>
+        <label class="sr-only" for="type-input">Type a command instead of speaking</label>
+        <input id="type-input" type="text" maxlength="500" autocomplete="off" placeholder="Or type a command">
+        <button id="btn-send" class="send" type="submit" aria-label="Send">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M5 12h13M13 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        </button>
+      </form>
+
+      <div class="chips" role="group" aria-label="Examples">
+        <button class="chip" type="button" data-say="I spent 250 on lunch">I spent 250 on lunch</button>
+        <button class="chip" type="button" data-say="Remind me to call mom tomorrow at 6 pm">Remind me to call mom tomorrow at 6 pm</button>
+        <button class="chip" type="button" data-say="How much did I spend this month?">How much did I spend this month?</button>
+        <button class="chip" type="button" data-say="What time is it?">What time is it?</button>
+      </div>
+      <details class="more-chips">
+        <summary>More examples</summary>
+        <div class="chips" role="group" aria-label="More examples">
+          <button class="chip" type="button" data-say="Set a food budget of 5000">Set a food budget of 5000</button>
+          <button class="chip" type="button" data-say="Change the last expense to 300">Change the last expense to 300</button>
+          <button class="chip" type="button" data-say="Show my food expenses">Show my food expenses</button>
+          <button class="chip" type="button" data-say="Remind me every day at 9 pm to take notes">Remind me every day at 9 pm</button>
+          <button class="chip" type="button" data-say="Delete the last expense">Delete the last expense</button>
+          <button class="chip" type="button" data-say="Tell me a fun fact">Tell me a fun fact</button>
+        </div>
+      </details>
+
+      <section class="slips" aria-label="History">
+        <div class="slips-head">
+          <h2>History</h2>
+          <button id="btn-clear-log" class="link-btn" type="button">Clear</button>
+        </div>
+        <ol id="log" class="log" aria-live="polite"></ol>
+      </section>
+
+      <details class="settings">
+        <summary data-i18n="settings">Voice settings</summary>
+        <div class="settings-body">
+          <label class="field">
+            <span data-i18n="speak">I speak</span>
+            <select id="lang">
+              <option value="auto" data-i18n="auto">Auto-detect (any language)</option>
+              <option value="en-IN">English (India)</option>
+              <option value="hi-IN">हिन्दी</option>
+              <option value="te-IN">తెలుగు</option>
+            </select>
+          </label>
+          <label class="field">
+            <span data-i18n="sounds">TellR sounds like</span>
+            <select id="voice">
+              <option value="hannah" data-i18n="v_hannah">Hannah (warm, female)</option>
+              <option value="daniel" data-i18n="v_daniel">Daniel (calm, male)</option>
+              <option value="device" data-i18n="v_device">This device’s voice</option>
+            </select>
+          </label>
+          <label class="check"><input id="keep" type="checkbox"> <span data-i18n="keep">Keep the conversation going</span></label>
+          <label class="check"><input id="mute" type="checkbox"> <span data-i18n="mute">Mute spoken replies</span></label>
+          <p id="lang-note" class="note" data-i18n="note" hidden>TellR will reply in the language you speak. Hindi and Telugu replies use a voice installed on this device.</p>
+          <p id="support-note" class="note" hidden>Voice input needs Chrome or Edge. You can still type.</p>
+        </div>
+      </details>
+    </aside>
+
+    <main class="ledger">
+      <div id="banner" class="banner" role="status" hidden>
+        <span id="banner-text"></span>
+        <button id="btn-retry" class="btn small" type="button">Try again</button>
+      </div>
+
+      <section id="result" class="result" hidden aria-live="polite">
+        <div class="head">
+          <h2 id="result-title">Result</h2>
+          <button id="btn-close-result" class="link-btn" type="button">Close</button>
+        </div>
+        <div id="result-body"></div>
+      </section>
+
+      <section class="spend" aria-labelledby="sum-h">
+        <div class="spend-top">
+          <h2 id="sum-h">Spent</h2>
+          <div id="period-tabs" class="tabs" role="group" aria-label="Period">
+            <button type="button" class="tab" data-period="today" aria-pressed="true">Today</button>
+            <button type="button" class="tab" data-period="week" aria-pressed="false">7 days</button>
+            <button type="button" class="tab" data-period="month" aria-pressed="false">This month</button>
+          </div>
+        </div>
+        <div class="spend-body">
+          <div class="total-block">
+            <p id="sum-total" class="sum-total">₹0</p>
+            <p class="sum-meta"><span id="sum-count">0</span> expenses · <span id="sum-rem">0</span> reminders open</p>
+            <p id="sum-compare" class="compare" hidden></p>
+          </div>
+          <div class="donut-wrap">
+            <svg id="donut" class="donut" viewBox="0 0 120 120" role="img" aria-label="Spending by category">
+              <circle class="donut-bg" cx="60" cy="60" r="46"/>
+              <g id="donut-segs" transform="rotate(-90 60 60)"></g>
+            </svg>
+          </div>
+          <ul id="sum-bars" class="bars"></ul>
+        </div>
+        <p id="sum-empty" class="empty" hidden>Nothing spent in this period. Say “I spent 120 on tea”.</p>
+        <figure class="trend">
+          <figcaption>Last 14 days</figcaption>
+          <svg id="trend" class="trend-svg" viewBox="0 0 308 112" role="img" aria-label="Spending per day for the last 14 days"></svg>
+        </figure>
+      </section>
+
+      <section class="budgets" aria-labelledby="bg-h">
+        <div class="col-head">
+          <h2 id="bg-h">Monthly budgets</h2>
+          <button id="btn-add-budget" class="btn primary small" type="button">Set budget</button>
+        </div>
+        <ul id="budget-list" class="budget-list"></ul>
+        <p id="bg-empty" class="empty" hidden>No budgets yet. Say “set a food budget of 5000” and TellR will warn you at 80 percent.</p>
+      </section>
+
+      <div class="columns">
+        <section class="col" aria-labelledby="ex-h">
+          <div class="col-head">
+            <h2 id="ex-h">Expenses</h2>
+            <a id="btn-export" class="btn small" href="/api/export.csv" download>Export CSV</a>
+            <button id="btn-add-expense" class="btn primary small" type="button">Add expense</button>
+          </div>
+          <label class="sr-only" for="ex-search">Search expenses</label>
+          <input id="ex-search" class="search" type="search" maxlength="60" autocomplete="off" placeholder="Search expenses">
+          <ul id="expense-list" class="list"></ul>
+          <p id="ex-empty" class="empty" hidden>No expenses yet. Tap the mic and say what you spent.</p>
+        </section>
+
+        <section class="col" aria-labelledby="rm-h">
+          <div class="col-head">
+            <h2 id="rm-h">Reminders</h2>
+            <label class="check small-check"><input id="rm-showdone" type="checkbox"> Show done</label>
+            <button id="btn-add-reminder" class="btn primary small" type="button">Add reminder</button>
+          </div>
+          <ul id="reminder-list" class="list"></ul>
+          <p id="rm-empty" class="empty" hidden>No reminders. Say “remind me to pay rent on Friday”.</p>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="dlg-expense" aria-labelledby="dx-h">
+    <form id="form-expense" novalidate>
+      <h2 id="dx-h">Add expense</h2>
+      <label class="field">
+        <span>Amount (₹)</span>
+        <input id="ex-amount" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="250">
+      </label>
+      <label class="field">
+        <span>Category</span>
+        <select id="ex-category"></select>
+      </label>
+      <label class="field">
+        <span>Note</span>
+        <input id="ex-note" type="text" maxlength="200" autocomplete="off" placeholder="Lunch">
+      </label>
+      <label class="field">
+        <span>Date</span>
+        <input id="ex-date" type="date">
+      </label>
+      <p id="ex-error" class="form-error" role="alert" hidden></p>
+      <div class="row end">
+        <button id="btn-ex-cancel" class="btn" type="button">Cancel</button>
+        <button id="btn-ex-add" class="btn primary" type="submit">Add expense</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-reminder" aria-labelledby="dr-h">
+    <form id="form-reminder" novalidate>
+      <h2 id="dr-h">Add reminder</h2>
+      <label class="field">
+        <span>What</span>
+        <input id="rm-title" type="text" maxlength="200" autocomplete="off" placeholder="Call mom">
+      </label>
+      <label class="field">
+        <span>Date</span>
+        <input id="rm-date" type="date">
+      </label>
+      <label class="field">
+        <span>Time (optional)</span>
+        <input id="rm-time" type="time">
+      </label>
+      <label class="field">
+        <span>Repeats</span>
+        <select id="rm-repeat">
+          <option value="">Does not repeat</option>
+          <option value="daily">Every day</option>
+          <option value="weekly">Every week</option>
+          <option value="monthly">Every month</option>
+        </select>
+      </label>
+      <p id="rm-error" class="form-error" role="alert" hidden></p>
+      <div class="row end">
+        <button id="btn-rm-cancel" class="btn" type="button">Cancel</button>
+        <button id="btn-rm-add" class="btn primary" type="submit">Add reminder</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-history" aria-labelledby="hist-h">
+    <h2 id="hist-h">History</h2>
+    <ol id="hist-list" class="log hist"></ol>
+    <p id="hist-empty" class="muted" hidden>Nothing here yet. Say something to TellR and it will show up.</p>
+    <div class="row end">
+      <button id="btn-hist-clear" class="btn" type="button">Clear history</button>
+      <button id="btn-hist-close" class="btn primary" type="button">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="dlg-budget" aria-labelledby="bgd-h">
+    <form id="form-budget" novalidate>
+      <h2 id="bgd-h">Set a monthly budget</h2>
+      <label class="field">
+        <span>For</span>
+        <select id="bg-category"></select>
+      </label>
+      <label class="field">
+        <span>Limit per month (₹)</span>
+        <input id="bg-limit" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="5000">
+      </label>
+      <p id="bg-error" class="form-error" role="alert" hidden></p>
+      <div class="row end">
+        <button id="btn-bg-cancel" class="btn" type="button">Cancel</button>
+        <button id="btn-bg-save" class="btn primary" type="submit">Save budget</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-edit" aria-labelledby="edit-h">
+    <form id="form-edit" novalidate>
+      <h2 id="edit-h">Edit expense</h2>
+      <label class="field">
+        <span>Amount (₹)</span>
+        <input id="ed-amount" type="number" inputmode="decimal" step="0.01" min="0.01">
+      </label>
+      <label class="field">
+        <span>Category</span>
+        <select id="ed-category"></select>
+      </label>
+      <label class="field">
+        <span>Note</span>
+        <input id="ed-note" type="text" maxlength="200" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Date</span>
+        <input id="ed-date" type="date">
+      </label>
+      <p id="ed-error" class="form-error" role="alert" hidden></p>
+      <div class="row end">
+        <button id="btn-ed-cancel" class="btn" type="button">Cancel</button>
+        <button id="btn-ed-save" class="btn primary" type="submit">Save changes</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-del" aria-labelledby="del-h">
+    <h2 id="del-h">Delete this?</h2>
+    <p id="del-text"></p>
+    <p id="del-error" class="form-error" role="alert" hidden></p>
+    <div class="row end">
+      <button id="btn-del-keep" class="btn" type="button">Keep it</button>
+      <button id="btn-del-go" class="btn danger" type="button">Delete</button>
+    </div>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
