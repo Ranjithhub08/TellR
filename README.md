@@ -15,8 +15,6 @@ A voice assistant for money and reminders in English, Hindi and Telugu.
 
 </div>
 
-Built solo in six hours for the Vocal Labs Round 2 hackathon. Built with AI assistance (Claude), reviewed and run by me.
-
 > The live demo runs on a free Render plan. It sleeps when idle, so the first load can take up to a minute.
 
 ---
