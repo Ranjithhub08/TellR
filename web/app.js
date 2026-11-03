@@ -1424,7 +1424,7 @@
   function resetDates() {
     var today = nowParts().date;
     ["ex-date", "rm-date", "ed-date"].forEach(function (id) {
-      $(id).max = id === "rm-date" ? "" : today;
+      $(id).max = "";
     });
     $("rm-date").min = today;
     if (!$("ex-date").value) $("ex-date").value = today;

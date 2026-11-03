@@ -73,15 +73,25 @@ func TestAddExpenseYesterday(t *testing.T) {
 	}
 }
 
-func TestFutureExpenseRejected(t *testing.T) {
+func TestFutureExpenseAllowedWithinAYear(t *testing.T) {
 	m, x := newExec()
-	_, err := run(t, x, Action{Type: TypeAddExpense, Amount: 100, Date: "tomorrow"})
+	if _, err := run(t, x, Action{Type: TypeAddExpense, Amount: 2000, Category: "other", Note: "medical", Date: "2026-12-01"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := expenses(t, m); len(got) != 1 || got[0].SpentOn != "2026-12-01" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestFarFutureExpenseRejected(t *testing.T) {
+	m, x := newExec()
+	_, err := run(t, x, Action{Type: TypeAddExpense, Amount: 100, Date: "2030-01-01"})
 	var ue *UserError
 	if !errors.As(err, &ue) {
 		t.Fatalf("want UserError, got %v", err)
 	}
 	if len(expenses(t, m)) != 0 {
-		t.Fatal("future expense was stored")
+		t.Fatal("far future expense was stored")
 	}
 }
 

@@ -39,7 +39,7 @@ func TestExpenseValidateRejects(t *testing.T) {
 		"too big":    {Amount: MaxAmount + 1},
 		"too small":  {Amount: 0.004},
 		"long note":  {Amount: 5, Note: long},
-		"future":     {Amount: 5, SpentOn: "2026-11-04"},
+		"far future": {Amount: 5, SpentOn: "2028-01-01"},
 		"bad format": {Amount: 5, SpentOn: "03/11/2026"},
 		"fake date":  {Amount: 5, SpentOn: "2026-02-30"},
 		"unpadded":   {Amount: 5, SpentOn: "2026-1-5"},

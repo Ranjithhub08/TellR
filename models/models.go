@@ -99,8 +99,8 @@ func (in *ExpenseInput) Validate(today time.Time) error {
 	if err := checkDate(in.SpentOn); err != nil {
 		return errors.New("spent_on must be a real date in YYYY-MM-DD format")
 	}
-	if in.SpentOn > todayStr {
-		return errors.New("spent_on cannot be in the future")
+	if in.SpentOn > today.AddDate(1, 0, 0).Format(DateLayout) {
+		return errors.New("spent_on is too far in the future")
 	}
 	if in.SpentOn < earliestDate {
 		return errors.New("spent_on is too far in the past")

@@ -382,7 +382,7 @@ func TestExpenseCRUD(t *testing.T) {
 func TestExpenseValidationOverHTTP(t *testing.T) {
 	e := newEnv(t)
 	bad := []string{
-		`{"amount":0}`, `{"amount":-3}`, `{"amount":5,"spent_on":"2026-11-30"}`,
+		`{"amount":0}`, `{"amount":-3}`, `{"amount":5,"spent_on":"2028-01-01"}`,
 		`{"amount":5,"spent_on":"yesterday"}`, `{"amount":"5"}`, `{}`, `{"amount":5,"extra":1}`,
 	}
 	for _, body := range bad {
