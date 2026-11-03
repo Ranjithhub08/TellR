@@ -164,7 +164,7 @@ func TestBudgetInputValidate(t *testing.T) {
 	if err := all.Validate(); err != nil || all.Category != "all" {
 		t.Fatalf("%+v %v", all, err)
 	}
-	for _, in := range []BudgetInput{{Category: "pets", Limit: 5}, {Category: "food", Limit: 0}, {Category: "food", Limit: -1}, {Category: "food", Limit: MaxAmount + 1}} {
+	for _, in := range []BudgetInput{{Category: "bad!name", Limit: 5}, {Category: "food", Limit: 0}, {Category: "food", Limit: -1}, {Category: "food", Limit: MaxAmount + 1}} {
 		if err := in.Validate(); err == nil {
 			t.Fatalf("%+v should fail", in)
 		}
@@ -202,5 +202,37 @@ func TestReminderRepeatValidation(t *testing.T) {
 	bad := ReminderInput{Title: "x", DueDate: "2026-11-04", Repeat: "hourly"}
 	if err := bad.Validate(now, false); err == nil {
 		t.Fatal("hourly must fail")
+	}
+}
+
+func TestWeekOfMonthRanges(t *testing.T) {
+	loc, _ := time.LoadLocation("Asia/Kolkata")
+	now := time.Date(2026, 11, 3, 10, 0, 0, 0, loc)
+	cases := map[string][2]string{
+		"week1": {"2026-11-01", "2026-11-07"},
+		"week2": {"2026-11-08", "2026-11-14"},
+		"week3": {"2026-11-15", "2026-11-21"},
+		"week4": {"2026-11-22", "2026-11-30"},
+		"week":  {"2026-10-28", "2026-11-03"},
+		"month": {"2026-11-01", "2026-11-03"},
+	}
+	for p, want := range cases {
+		f, to, err := PeriodRange(p, now)
+		if err != nil || f != want[0] || to != want[1] {
+			t.Errorf("%s: %s..%s err=%v, want %v", p, f, to, err, want)
+		}
+	}
+	feb := time.Date(2027, 2, 10, 0, 0, 0, 0, loc)
+	if f, to, _ := PeriodRange("week4", feb); f != "2027-02-22" || to != "2027-02-28" {
+		t.Errorf("february week4: %s..%s", f, to)
+	}
+	if f, to, ok := PreviousRange("week3", now); !ok || f != "2026-11-08" || to != "2026-11-14" {
+		t.Errorf("previous of week3: %s..%s %v", f, to, ok)
+	}
+	if _, _, ok := PreviousRange("week1", now); ok {
+		t.Error("week1 has no previous")
+	}
+	if _, _, err := PeriodRange("week5", now); err == nil {
+		t.Error("week5 must be rejected")
 	}
 }

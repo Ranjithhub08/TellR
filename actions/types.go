@@ -25,6 +25,7 @@ const (
 	TypeSetBudget        = "set_budget"
 	TypeClearBudget      = "clear_budget"
 	TypeListBudgets      = "list_budgets"
+	TypeRenameBudget     = "rename_budget"
 	TypeClarify          = "clarify"
 
 	MaxActions = 5
@@ -76,6 +77,7 @@ type Action struct {
 	Type     string `json:"type"`
 	Amount   Num    `json:"amount"`
 	Category string `json:"category"`
+	NewCat   string `json:"new_category"`
 	Note     string `json:"note"`
 	Title    string `json:"title"`
 	Date     string `json:"date"`

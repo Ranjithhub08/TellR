@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -21,6 +22,9 @@ type Transcriber struct {
 	BaseURL string
 	APIKey  string
 	Model   string
+	Indic   string
+	Sarvam  *SarvamSTT
+	Log     *slog.Logger
 	HTTP    *http.Client
 }
 
@@ -33,8 +37,24 @@ func NewTranscriber(baseURL, apiKey, model string) *Transcriber {
 	}
 }
 
-func (t *Transcriber) Enabled() bool {
+func (t *Transcriber) WithIndicModel(m string) *Transcriber {
+	t.Indic = strings.TrimSpace(m)
+	return t
+}
+
+func (t *Transcriber) modelFor(lang string) string {
+	if (lang == "hi" || lang == "te") && t.Indic != "" {
+		return t.Indic
+	}
+	return t.Model
+}
+
+func (t *Transcriber) whisperOK() bool {
 	return t != nil && t.APIKey != "" && t.Model != ""
+}
+
+func (t *Transcriber) Enabled() bool {
+	return t.whisperOK() || (t != nil && t.Sarvam.Enabled())
 }
 
 func audioExt(mime string) string {
@@ -113,6 +133,7 @@ func langFamily(name string) string {
 
 const (
 	flipMargin = 0.15
+	indicFlip  = 0.4
 	hintBonus  = 0.1
 	badScript  = 1.0
 )
@@ -121,11 +142,26 @@ func (t *Transcriber) Transcribe(ctx context.Context, audio []byte, mime, hint s
 	if !t.Enabled() {
 		return "", "", ErrNotConfigured
 	}
+	if t.Sarvam.Enabled() {
+		text, lang, err := t.Sarvam.Transcribe(ctx, audio, mime)
+		if err == nil {
+			if t.Log != nil {
+				t.Log.Info("sarvam transcription", "lang", lang)
+			}
+			return text, lang, nil
+		}
+		if errors.Is(err, ErrNoSpeech) || !t.whisperOK() {
+			return "", "", err
+		}
+		if t.Log != nil {
+			t.Log.Warn("sarvam transcription failed, using whisper", "err", err)
+		}
+	}
 	first, err := t.call(ctx, audio, mime, "")
 	if err != nil {
 		return "", "", err
 	}
-	if first.noSpeech() > 0.6 {
+	if first.noSpeech() > 0.6 && first.score() < -1.0 {
 		return "", "", ErrNoSpeech
 	}
 	fam := langFamily(first.Language)
@@ -170,9 +206,12 @@ func finish(text, lang string) (string, string, error) {
 
 func (t *Transcriber) pickIndic(ctx context.Context, audio []byte, mime, hint string, first whisperResult, fam string, langs []string) (string, string, error) {
 	cands := map[string]whisperResult{}
+	reuse := fam == "en" || t.Indic == "" || t.Indic == t.Model
 	switch strings.ToLower(first.Language) {
 	case "hindi", "telugu", "english":
-		cands[fam] = first
+		if reuse {
+			cands[fam] = first
+		}
 	}
 	var need []string
 	for _, l := range langs {
@@ -228,8 +267,15 @@ func (t *Transcriber) pickIndic(ctx context.Context, audio []byte, mime, hint st
 			top = l
 		}
 	}
-	if top != best && scores[top] > scores[best]+flipMargin {
+	margin := flipMargin
+	if best != "en" && top != "en" {
+		margin = indicFlip
+	}
+	if top != best && scores[top] > scores[best]+margin {
 		best = top
+	}
+	if t.Log != nil {
+		t.Log.Info("language pick", "detected", first.Language, "hint", hint, "te", scores["te"], "hi", scores["hi"], "en", scores["en"], "chosen", best)
 	}
 	return finish(cands[best].Text, best)
 }
@@ -239,7 +285,7 @@ func (t *Transcriber) call(ctx context.Context, audio []byte, mime, language str
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 	fields := map[string]string{
-		"model":           t.Model,
+		"model":           t.modelFor(language),
 		"response_format": "verbose_json",
 		"temperature":     "0",
 	}

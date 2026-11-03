@@ -1,0 +1,7 @@
+date,category,amount,note
+2026-11-01,food,150,good row
+03/11/2026,transport,"1,200",date in day/month/year and amount with comma
+2026-11-02,travel,abc,bad amount
+not-a-date,food,50,bad date
+2026-11-02,spaceship,75,unknown category becomes other
+2026-11-02,food,-20,negative amount

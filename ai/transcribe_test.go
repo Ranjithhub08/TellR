@@ -107,6 +107,7 @@ type whisperStub struct {
 	scores   map[string]float64
 	nospeech float64
 	calls    []string
+	models   []string
 }
 
 func (w *whisperStub) handler(t *testing.T) http.HandlerFunc {
@@ -123,6 +124,7 @@ func (w *whisperStub) handler(t *testing.T) http.HandlerFunc {
 		lang := r.FormValue("language")
 		w.mu.Lock()
 		w.calls = append(w.calls, lang)
+		w.models = append(w.models, r.FormValue("model"))
 		w.mu.Unlock()
 		var key string
 		name := w.detected
@@ -294,5 +296,154 @@ func TestTranscribeShortEnglishStaysWhenIndicIsWorse(t *testing.T) {
 	_, lang, err := tr.Transcribe(context.Background(), []byte("a"), "audio/webm", "")
 	if err != nil || lang != "en" {
 		t.Fatalf("lang=%q err=%v", lang, err)
+	}
+}
+
+func TestForcedIndicPassesUseTheStrongerModel(t *testing.T) {
+	stub := &whisperStub{
+		detected: "telugu",
+		langs:    map[string]string{"te": "నేను 250 ఖర్చు", "hi": "मैंने 250 खर्च"},
+		scores:   map[string]float64{"te": -0.3, "hi": -1.0},
+	}
+	srv := httptest.NewServer(stub.handler(t))
+	defer srv.Close()
+	tr := NewTranscriber(srv.URL, "k", "turbo").WithIndicModel("large")
+	if _, lang, err := tr.Transcribe(context.Background(), []byte("a"), "audio/webm", ""); err != nil || lang != "te" {
+		t.Fatalf("lang=%q err=%v", lang, err)
+	}
+	for i, c := range stub.calls {
+		want := "large"
+		if c == "" {
+			want = "turbo"
+		}
+		if stub.models[i] != want {
+			t.Fatalf("call %q used %q, want %q", c, stub.models[i], want)
+		}
+	}
+	if len(stub.calls) != 3 {
+		t.Fatalf("calls = %v", stub.calls)
+	}
+}
+
+func TestSilenceNeedsLowConfidenceToo(t *testing.T) {
+	stub := &whisperStub{
+		detected: "telugu",
+		langs:    map[string]string{"te": "నేను 250 ఖర్చు", "hi": "x"},
+		scores:   map[string]float64{"te": -0.4, "hi": -1.5},
+		nospeech: 0.7,
+	}
+	srv := httptest.NewServer(stub.handler(t))
+	defer srv.Close()
+	tr := NewTranscriber(srv.URL, "k", "m")
+	if _, lang, err := tr.Transcribe(context.Background(), []byte("a"), "audio/webm", ""); err != nil || lang != "te" {
+		t.Fatalf("confident speech with some no-speech probability must pass: lang=%q err=%v", lang, err)
+	}
+}
+
+func TestIndicFlipNeedsBigEvidence(t *testing.T) {
+	stub := &whisperStub{
+		detected: "telugu",
+		langs:    map[string]string{"te": "నేను 250 ఖర్చు", "hi": "मैंने 250 खर्च"},
+		scores:   map[string]float64{"te": -0.6, "hi": -0.3},
+	}
+	srv := httptest.NewServer(stub.handler(t))
+	defer srv.Close()
+	tr := NewTranscriber(srv.URL, "k", "m")
+	if _, lang, _ := tr.Transcribe(context.Background(), []byte("a"), "audio/webm", ""); lang != "te" {
+		t.Fatalf("a small lead must not flip a confident detection: %q", lang)
+	}
+	stub.scores = map[string]float64{"te": -1.3, "hi": -0.3}
+	if _, lang, _ := tr.Transcribe(context.Background(), []byte("a"), "audio/webm", ""); lang != "hi" {
+		t.Fatalf("a big lead should flip: %q", lang)
+	}
+}
+
+func sarvamServer(t *testing.T, status int, body string, got *map[string]string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("api-subscription-key") != "sk" || r.URL.Path != "/speech-to-text" {
+			t.Errorf("bad request: key=%q path=%q", r.Header.Get("api-subscription-key"), r.URL.Path)
+		}
+		r.ParseMultipartForm(1 << 20)
+		if got != nil {
+			*got = map[string]string{"language_code": r.FormValue("language_code"), "model": r.FormValue("model")}
+			if _, h, err := r.FormFile("file"); err == nil {
+				(*got)["ctype"] = h.Header.Get("Content-Type")
+			}
+		}
+		w.WriteHeader(status)
+		w.Write([]byte(body))
+	}))
+}
+
+func TestSarvamTranscribesTeluguAndDetectsLanguage(t *testing.T) {
+	var got map[string]string
+	srv := sarvamServer(t, 200, `{"transcript":"నేను లంచ్ కోసం 250 ఖర్చు చేశాను","language_code":"te-IN"}`, &got)
+	defer srv.Close()
+	tr := NewTranscriber("http://127.0.0.1:1", "", "m")
+	tr.Sarvam = NewSarvamSTT(srv.URL, "sk", "saaras:v4")
+	text, lang, err := tr.Transcribe(context.Background(), []byte("a"), "audio/webm;codecs=opus", "")
+	if err != nil || lang != "te" || !strings.Contains(text, "250") {
+		t.Fatalf("text=%q lang=%q err=%v", text, lang, err)
+	}
+	if got["language_code"] != "unknown" || got["model"] != "saaras:v4" || got["ctype"] != "audio/webm" {
+		t.Fatalf("sent: %v", got)
+	}
+}
+
+func TestSarvamLanguageCodesAndScriptWin(t *testing.T) {
+	cases := []struct{ body, want string }{
+		{`{"transcript":"I spent 100 on tea","language_code":"en-IN"}`, "en"},
+		{`{"transcript":"मैंने चाय पर 50 खर्च किए","language_code":"hi-IN"}`, "hi"},
+		{`{"transcript":"मुझे कल याद दिलाओ","language_code":"mr-IN"}`, "hi"},
+		{`{"transcript":"నేను టీ కోసం 20","language_code":"hi-IN"}`, "te"},
+		{`{"transcript":"spent 20 on tea","language_code":null}`, "en"},
+	}
+	for _, c := range cases {
+		srv := sarvamServer(t, 200, c.body, nil)
+		s := NewSarvamSTT(srv.URL, "sk", "")
+		_, lang, err := s.Transcribe(context.Background(), []byte("a"), "audio/webm")
+		srv.Close()
+		if err != nil || lang != c.want {
+			t.Errorf("%s -> %q err=%v, want %q", c.body, lang, err, c.want)
+		}
+	}
+}
+
+func TestSarvamEmptyIsNoSpeechWithoutWhisperFallback(t *testing.T) {
+	srv := sarvamServer(t, 200, `{"transcript":"  ","language_code":"te-IN"}`, nil)
+	defer srv.Close()
+	whisperCalled := false
+	w := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) { whisperCalled = true }))
+	defer w.Close()
+	tr := NewTranscriber(w.URL, "k", "m")
+	tr.Sarvam = NewSarvamSTT(srv.URL, "sk", "")
+	if _, _, err := tr.Transcribe(context.Background(), []byte("a"), "audio/webm", ""); !errors.Is(err, ErrNoSpeech) || whisperCalled {
+		t.Fatalf("err=%v whisperCalled=%v", err, whisperCalled)
+	}
+}
+
+func TestSarvamFailureFallsBackToWhisper(t *testing.T) {
+	srv := sarvamServer(t, 503, `down`, nil)
+	defer srv.Close()
+	stub := &whisperStub{
+		detected: "english",
+		langs:    map[string]string{"en": "I spent 250 rupees on lunch today with my friends"},
+		scores:   map[string]float64{"en": -0.1},
+	}
+	w := httptest.NewServer(stub.handler(t))
+	defer w.Close()
+	tr := NewTranscriber(w.URL, "k", "m")
+	tr.Sarvam = NewSarvamSTT(srv.URL, "sk", "")
+	text, lang, err := tr.Transcribe(context.Background(), []byte("a"), "audio/webm", "")
+	if err != nil || lang != "en" || !strings.Contains(text, "250") {
+		t.Fatalf("text=%q lang=%q err=%v", text, lang, err)
+	}
+	tr2 := NewTranscriber("http://127.0.0.1:1", "", "")
+	tr2.Sarvam = NewSarvamSTT(srv.URL, "sk", "")
+	if !tr2.Enabled() {
+		t.Fatal("sarvam alone should enable transcription")
+	}
+	if _, _, err := tr2.Transcribe(context.Background(), []byte("a"), "audio/webm", ""); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("no whisper to fall back to: %v", err)
 	}
 }

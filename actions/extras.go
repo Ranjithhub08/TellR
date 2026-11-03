@@ -97,6 +97,8 @@ func comparison(s models.Summary, period string) string {
 		base = "the 7 days before"
 	case "month":
 		base = "the same stretch last month"
+	case "week2", "week3", "week4":
+		base = "the week before"
 	default:
 		base = "yesterday"
 	}
@@ -133,6 +135,37 @@ func shortDate(s string) string {
 		return s
 	}
 	return d.Format("2 January")
+}
+
+func NormalizeCat(s string) string {
+	return models.NormalizeName(s)
+}
+
+func CustomBudgetNames(ctx context.Context, r Repo) []string {
+	list, err := r.ListBudgets(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, b := range list {
+		if b.Category != models.AllBudget && !models.ValidCategory(b.Category) {
+			out = append(out, b.Category)
+		}
+	}
+	return out
+}
+
+func KeepCustom(ctx context.Context, r Repo, raw, current string) string {
+	raw = models.NormalizeName(raw)
+	if current != "other" || raw == "" || raw == "other" || models.ValidCategory(raw) {
+		return current
+	}
+	for _, n := range CustomBudgetNames(ctx, r) {
+		if n == raw {
+			return raw
+		}
+	}
+	return current
 }
 
 func categoryLabel(c string) string {

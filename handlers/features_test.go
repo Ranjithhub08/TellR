@@ -29,7 +29,7 @@ func TestBudgetEndpoints(t *testing.T) {
 	}
 	expect(t, e.do("DELETE", "/api/budgets/food", ""), http.StatusNoContent)
 	expect(t, e.do("DELETE", "/api/budgets/food", ""), http.StatusNotFound)
-	expect(t, e.do("DELETE", "/api/budgets/pets", ""), http.StatusBadRequest)
+	expect(t, e.do("DELETE", "/api/budgets/bad%21name", ""), http.StatusBadRequest)
 }
 
 func TestBudgetEndpointValidation(t *testing.T) {
@@ -37,7 +37,7 @@ func TestBudgetEndpointValidation(t *testing.T) {
 	for _, c := range []struct{ path, body string }{
 		{"/api/budgets/food", `{"limit":0}`},
 		{"/api/budgets/food", `{"limit":-3}`},
-		{"/api/budgets/pets", `{"limit":10}`},
+		{"/api/budgets/bad%21name", `{"limit":10}`},
 		{"/api/budgets/food", `{"limit":10,"x":1}`},
 		{"/api/budgets/food", `{oops`},
 	} {
@@ -261,4 +261,101 @@ func TestReplyLanguageFollowsScriptOfSpeech(t *testing.T) {
 	if _, has := got["reply_lang"]; has {
 		t.Fatalf("english speech with telugu setting should stay english: %v", got)
 	}
+}
+
+func (e *env) csv(body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "text/csv")
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestImportCSVWithHeaderAndMessyRows(t *testing.T) {
+	e := newEnv(t)
+	file := "\ufeffdate,category,amount,note\n" +
+		"2026-11-01,food,150,tea\n" +
+		"03/11/2026,transport,\"1,200\",cab\n" +
+		"2026-11-02,spaceship,75,mystery\n" +
+		"2026-11-02,food,abc,bad amount\n" +
+		"nope,food,50,bad date\n" +
+		"2026-11-02,food,-20,negative\n" +
+		"\n"
+	got := expect(t, e.csv(file), http.StatusOK)
+	if got["imported"] != float64(3) || got["skipped"] != float64(3) || got["duplicates"] != float64(0) {
+		t.Fatalf("result: %v", got)
+	}
+	if p, _ := got["problems"].([]any); len(p) != 3 {
+		t.Fatalf("problems: %v", got["problems"])
+	}
+	list := expect(t, e.do("GET", "/api/expenses?limit=50", ""), http.StatusOK)
+	items := list["expenses"].([]any)
+	cats := map[string]bool{}
+	for _, it := range items {
+		cats[it.(map[string]any)["category"].(string)] = true
+	}
+	if len(items) != 3 || !cats["other"] || !cats["transport"] {
+		t.Fatalf("stored: %v", items)
+	}
+}
+
+func TestImportCSVIsIdempotentAndPositional(t *testing.T) {
+	e := newEnv(t)
+	file := "2026-11-01,food,100,lunch\n2026-11-01,food,100,lunch\n2026-11-02,bills,500,wifi\n"
+	got := expect(t, e.csv(file), http.StatusOK)
+	if got["imported"] != float64(2) || got["duplicates"] != float64(1) {
+		t.Fatalf("first: %v", got)
+	}
+	got = expect(t, e.csv(file), http.StatusOK)
+	if got["imported"] != float64(0) || got["duplicates"] != float64(3) {
+		t.Fatalf("second: %v", got)
+	}
+}
+
+func TestImportCSVRejections(t *testing.T) {
+	e := newEnv(t)
+	expect(t, e.csv(""), http.StatusBadRequest)
+	m := expect(t, e.csv("date,category,amount,note\nbad,food,x,y\n"), http.StatusBadRequest)
+	if s, _ := m["error"].(string); !strings.Contains(s, "Row 2") {
+		t.Fatalf("message: %v", m)
+	}
+	var b strings.Builder
+	for i := 0; i < 1100; i++ {
+		b.WriteString("2026-11-01,food,10,x\n")
+	}
+	expect(t, e.csv(b.String()), http.StatusBadRequest)
+	big := strings.Repeat("a", maxImportBytes+10)
+	expect(t, e.csv(big), http.StatusRequestEntityTooLarge)
+}
+
+func TestCustomBudgetNameBecomesCategory(t *testing.T) {
+	e := newEnv(t)
+	expect(t, e.do("PUT", "/api/budgets/Pet%20Care", `{"limit":2000}`), http.StatusOK)
+	cats := expect(t, e.do("GET", "/api/categories", ""), http.StatusOK)["categories"].([]any)
+	if cats[len(cats)-1] != "pet care" {
+		t.Fatalf("categories: %v", cats)
+	}
+	got := expect(t, e.do("POST", "/api/expenses", `{"amount":300,"category":"Pet Care","note":"dog food","spent_on":"2026-11-02"}`), http.StatusCreated)
+	if got["category"] != "pet care" {
+		t.Fatalf("created: %v", got)
+	}
+	got = expect(t, e.do("POST", "/api/expenses", `{"amount":300,"category":"unknown thing","note":"x","spent_on":"2026-11-02"}`), http.StatusCreated)
+	if got["category"] != "other" {
+		t.Fatalf("unknown stays other: %v", got)
+	}
+	expect(t, e.do("PUT", "/api/budgets/bad%21name", `{"limit":100}`), http.StatusBadRequest)
+	expect(t, e.do("DELETE", "/api/budgets/pet%20care", ""), http.StatusNoContent)
+	cats = expect(t, e.do("GET", "/api/categories", ""), http.StatusOK)["categories"].([]any)
+	if len(cats) != 11 {
+		t.Fatalf("custom name should disappear with its budget: %v", cats)
+	}
+}
+
+func TestSummaryAcceptsWeekOfMonth(t *testing.T) {
+	e := newEnv(t)
+	got := expect(t, e.do("GET", "/api/summary?period=week2", ""), http.StatusOK)
+	if got["period"] != "week2" || got["from"] == "" || got["to"] == "" {
+		t.Fatalf("summary: %v", got)
+	}
+	expect(t, e.do("GET", "/api/summary?period=week9", ""), http.StatusBadRequest)
 }

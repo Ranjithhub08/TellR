@@ -56,6 +56,7 @@
 .cat-shopping { --c: #ec4899; }
 .cat-bills { --c: #f2b01e; }
 .cat-health { --c: #ef4444; }
+.cat-gym { --c: #f97316; }
 .cat-entertainment { --c: #14b8a6; }
 .cat-education { --c: #6366f1; }
 .cat-other { --c: #8892b0; }
@@ -1488,4 +1489,76 @@ a.btn {
 
 .muted {
   color: var(--muted);
+}
+
+.sum-range { margin: 2px 0 0; font-size: 0.82rem; color: var(--muted, #6b7280); }
+.tabs { flex-wrap: wrap; border-radius: 20px; max-width: 100%; }
+.tab { padding: 7px 12px; }
+
+.list.scroll {
+  max-height: 440px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--line);
+}
+
+.thead {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto 128px;
+  column-gap: 12px;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.thead span:nth-child(3) {
+  text-align: right;
+  padding-right: 8px;
+}
+
+.item.trow {
+  grid-template-columns: 64px minmax(0, 1fr) auto 128px;
+  column-gap: 12px;
+  padding: 10px 0;
+}
+
+.item.trow .tdate {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.item.trow .item-title {
+  font-size: 15px;
+}
+
+.item.trow .item-sub .dot {
+  margin: 0;
+  flex: none;
+}
+
+.item.trow .money {
+  font-size: 16px;
+  margin-right: 0;
+  text-align: right;
+}
+
+.item.trow .item-side {
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+@media (max-width: 560px) {
+  .thead {
+    display: none;
+  }
+  .item.trow {
+    grid-template-columns: 54px minmax(0, 1fr) auto;
+    row-gap: 6px;
+  }
+  .item.trow .item-side {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
 }

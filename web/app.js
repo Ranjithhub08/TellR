@@ -32,6 +32,8 @@
     aiEnabled: false,
     ttsOn: false,
     ttsAvail: false,
+    indicOn: false,
+    indicFails: 0,
     sttOn: false,
     replyLang: "",
     lastLang: "",
@@ -396,7 +398,7 @@
     return out.slice(0, 4);
   }
 
-  function fetchAudio(text) {
+  function fetchAudio(text, lang) {
     var ctl = new AbortController();
     var timer = setTimeout(function () {
       ctl.abort();
@@ -404,7 +406,7 @@
     return fetch("/api/speak", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Timezone": tz },
-      body: JSON.stringify({ text: text, voice: els.voice.value }),
+      body: JSON.stringify({ text: text, voice: els.voice.value, lang: lang || "" }),
       signal: ctl.signal
     })
       .then(function (res) {
@@ -444,6 +446,15 @@
       var p = a.play();
       if (p && p.catch) p.catch(reject);
     });
+  }
+
+  function noteIndicFailure(err) {
+    state.indicFails++;
+    if (state.indicFails >= 2) state.indicOn = false;
+    if (!state.ttsWarned) {
+      state.ttsWarned = true;
+      toast("Using this device's voice for Hindi and Telugu. " + (err && err.message ? err.message : ""), "bad");
+    }
   }
 
   function noteTtsFailure(err) {
@@ -525,9 +536,12 @@
     });
   }
 
-  function speakNatural(text, my) {
-    var chunks = chunkText(text, 190);
-    var fetches = chunks.map(fetchAudio);
+  function speakNatural(text, my, lang) {
+    var chunks = chunkText(text, lang ? 160 : 190);
+    var fetches = chunks.map(function (c) {
+      return fetchAudio(c, lang);
+    });
+    var fail = lang ? noteIndicFailure : noteTtsFailure;
     var step = function (i) {
       if (my !== speakSeq || i >= chunks.length) return Promise.resolve();
       return fetches[i].then(
@@ -536,21 +550,22 @@
             URL.revokeObjectURL(url);
             return;
           }
-          state.ttsFails = 0;
+          if (lang) state.indicFails = 0;
+          else state.ttsFails = 0;
           return playUrl(url).then(
             function () {
               return step(i + 1);
             },
             function (err) {
-              noteTtsFailure(err);
-              return speakDevice(chunks.slice(i).join(" "), my);
+              fail(err);
+              return speakDevice(chunks.slice(i).join(" "), my, lang || undefined);
             }
           );
         },
         function (err) {
           if (my !== speakSeq) return;
-          noteTtsFailure(err);
-          return speakDevice(chunks.slice(i).join(" "), my);
+          fail(err);
+          return speakDevice(chunks.slice(i).join(" "), my, lang || undefined);
         }
       );
     };
@@ -579,8 +594,9 @@
       };
       speakCancel = finish;
       var foreign = lang && lang.toLowerCase().indexOf("en") !== 0 ? lang : "";
+      var indic = foreign && state.indicOn && els.voice.value !== "device";
       var natural = !foreign && els.voice.value !== "device" && state.ttsOn;
-      var run = natural ? speakNatural(text, my) : speakDevice(text, my, foreign);
+      var run = indic ? speakNatural(text, my, foreign) : natural ? speakNatural(text, my) : speakDevice(text, my, foreign);
       run.then(finish, finish);
     });
   }
@@ -766,11 +782,11 @@
               floor = Math.max(floor, lv);
               return;
             }
-            if (lv > Math.max(0.02, floor * 2.5)) {
+            if (lv > Math.max(0.012, floor * 2)) {
               if (!heardAt) heardAt = now;
               lastLoud = now;
             }
-            if (heardAt && now - lastLoud > 1300) finish(true);
+            if (heardAt && now - lastLoud > 2200) finish(true);
             else if (!heardAt && now - startedAt > 7000) finish(false);
             else if (now - startedAt > 25000) finish(!!heardAt);
           };
@@ -836,8 +852,16 @@
     var r = new Recognition();
     r.lang = recogLang();
     r.interimResults = true;
-    r.continuous = false;
+    r.continuous = true;
     r.maxAlternatives = 1;
+    var quietTimer = null;
+    var capTimer = setTimeout(function () {
+      try {
+        r.stop();
+      } catch (e) {
+        return;
+      }
+    }, 25000);
 
     r.onresult = function (e) {
       if (session !== recSession) return;
@@ -849,6 +873,14 @@
       }
       interimText = interim;
       setHeard((finalText + interim).trim() || "…", true);
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(function () {
+        try {
+          r.stop();
+        } catch (e) {
+          return;
+        }
+      }, 2000);
     };
 
     r.onerror = function (e) {
@@ -871,6 +903,8 @@
     };
 
     r.onend = function () {
+      clearTimeout(quietTimer);
+      clearTimeout(capTimer);
       if (session !== recSession) return;
       rec = null;
       var text = (finalText || interimText).trim();
@@ -1001,7 +1035,7 @@
   function compareText(s, period) {
     if (!s.has_previous || !(s.previous > 0) || !(s.count > 0)) return null;
     var diff = Math.round(((s.total - s.previous) / s.previous) * 100);
-    var base = period === "week" ? "the 7 days before" : period === "month" ? "the same days last month" : "yesterday";
+    var base = period === "week" ? "the 7 days before" : period === "month" ? "the same days last month" : period.indexOf("week") === 0 ? "the week before" : "yesterday";
     if (diff === 0) return { cls: "", text: "Same as " + base };
     return diff > 0
       ? { cls: "up", text: "Up " + diff + "% from " + base }
@@ -1168,7 +1202,21 @@
 
   function expenseRow(e, actions) {
     var flash = state.seenExpenses && !state.seenExpenses[e.id] && actions;
-    return h("li", { class: "item cat-" + e.category + (flash ? " flash" : "") },
+    if (actions) {
+      return h("li", { class: "item trow cat-" + e.category + (flash ? " flash" : "") },
+        h("span", { class: "tdate", text: dateLabel(e.spent_on) }),
+        h("div", { class: "item-main" },
+          h("div", { class: "item-title", text: e.note || title(e.category) }),
+          h("div", { class: "item-sub" }, h("span", { class: "dot" }), h("span", { text: title(e.category) }))
+        ),
+        h("span", { class: "money", text: money(e.amount) }),
+        h("div", { class: "item-side" },
+          h("button", { class: "btn small", type: "button", text: "Edit", "aria-label": "Edit expense " + (e.note || e.category), onclick: function () { openEdit(e); } }),
+          h("button", { class: "btn small danger", type: "button", text: "Delete", "aria-label": "Delete expense " + (e.note || e.category), onclick: function () { askDelete("expense", e); } })
+        )
+      );
+    }
+    return h("li", { class: "item cat-" + e.category },
       h("span", { class: "dot" }),
       h("div", { class: "item-main" },
         h("div", { class: "item-title", text: e.note || title(e.category) }),
@@ -1216,11 +1264,22 @@
     return m;
   }
 
+  function rangeLabel(s) {
+    function fmt(d) {
+      var p = String(d).split("-");
+      if (p.length !== 3) return d;
+      return parseInt(p[2], 10) + " " + ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][parseInt(p[1], 10) - 1];
+    }
+    if (!s.from || !s.to) return "";
+    return s.from === s.to ? fmt(s.from) : fmt(s.from) + " to " + fmt(s.to);
+  }
+
   function loadSummary() {
     var my = ++state.seq.summary;
     return api("/api/summary?period=" + encodeURIComponent(state.period)).then(function (s) {
       if (my !== state.seq.summary) return;
       $("sum-total").textContent = money(s.total);
+      $("sum-range").textContent = rangeLabel(s);
       var cmp = compareText(s, state.period);
       var cmpNode = $("sum-compare");
       cmpNode.hidden = !cmp;
@@ -1309,6 +1368,8 @@
         state.aiEnabled = !!h2.ai;
         state.ttsOn = !!h2.tts;
         state.ttsAvail = !!h2.tts;
+        state.indicOn = !!h2.indic;
+        state.indicFails = 0;
         state.sttOn = !!h2.stt;
         if (state.phase === "off" && canRecord() && state.sttOn) setPhase("idle");
         setPill(els.pillAi, h2.ai ? "AI: ready" : "AI: key missing", h2.ai ? "ok" : "warn");
@@ -1330,8 +1391,15 @@
     sel.textContent = "";
     sel.append(h("option", { value: "all", text: "Everything" }));
     list.forEach(function (c) {
-      sel.append(h("option", { value: c, text: title(c) }));
+      sel.append(h("option", { value: c, text: c === "other" ? "Other (give it a name)" : title(c) }));
     });
+  }
+
+  function toggleBudgetName() {
+    var wrap = $("bg-name-wrap");
+    var show = $("bg-category").value === "other";
+    wrap.hidden = !show;
+    if (show) $("bg-name").focus();
   }
 
   function fillCategories(list) {
@@ -1408,9 +1476,53 @@
       });
   }
 
+  function importFile() {
+    var f = $("file-import").files && $("file-import").files[0];
+    if (!f) return;
+    if (f.size > 500 * 1024) {
+      toast("That file is too big. Keep it under 500 KB.", "bad");
+      return;
+    }
+    var btn = $("btn-import");
+    btn.disabled = true;
+    f.text()
+      .then(function (text) {
+        return fetch("/api/import", { method: "POST", headers: { "Content-Type": "text/csv", "X-Timezone": tz }, body: text });
+      })
+      .then(function (res) {
+        return res
+          .json()
+          .catch(function () {
+            return null;
+          })
+          .then(function (d) {
+            if (!res.ok) throw new ApiError(d && d.error ? d.error : "Import failed (" + res.status + ").", res.status);
+            return d;
+          });
+      })
+      .then(function (d) {
+        var msg = "Imported " + d.imported + (d.imported === 1 ? " expense" : " expenses") + ".";
+        if (d.duplicates) msg += " " + d.duplicates + " already existed.";
+        if (d.skipped) {
+          var first = d.problems && d.problems[0];
+          msg += " Skipped " + d.skipped + (first ? " (row " + first.row + ": " + first.reason + ")" : "") + ".";
+        }
+        toast(msg, d.skipped ? "bad" : undefined);
+        return refreshAll();
+      })
+      .catch(function (err) {
+        toast(err.message || "Import failed.", "bad");
+      })
+      .finally(function () {
+        btn.disabled = false;
+      });
+  }
+
   function openBudgetDialog() {
     showFormError("bg-error", "");
     $("bg-limit").value = "";
+    $("bg-name").value = "";
+    $("bg-name-wrap").hidden = $("bg-category").value !== "other";
     $("dlg-budget").showModal();
     $("bg-limit").focus();
   }
@@ -1424,13 +1536,18 @@
       $("bg-limit").focus();
       return;
     }
+    var cat = $("bg-category").value;
+    if (cat === "other") {
+      var typed = $("bg-name").value.trim().toLowerCase().replace(/\s+/g, " ");
+      if (typed) cat = typed;
+    }
     var btn = $("btn-bg-save");
     btn.disabled = true;
-    api("/api/budgets/" + encodeURIComponent($("bg-category").value), { method: "PUT", body: { limit: amount } })
+    api("/api/budgets/" + encodeURIComponent(cat), { method: "PUT", body: { limit: amount } })
       .then(function () {
         $("dlg-budget").close();
         toast("Budget saved.");
-        return refreshAll();
+        return loadCategories().then(refreshAll);
       })
       .catch(function (err) {
         showFormError("bg-error", err.message);
@@ -1617,7 +1734,7 @@
     en: {
       settings: "Voice settings", auto: "Auto-detect (any language)", speak: "I speak", sounds: "TellR sounds like",
       keep: "Keep listening after replies", mute: "Mute spoken replies",
-      note: "TellR will reply in the language you speak. Hindi and Telugu replies use a voice installed on this device.",
+      note: "TellR will reply in the language you speak. Hindi and Telugu replies use a natural Indian voice when it is set up, otherwise a voice on this device.",
       v_hannah: "Hannah (warm, female)", v_daniel: "Daniel (calm, male)", v_device: "This device’s voice",
       hello: "Hi, I'm TellR. I'll keep track of your spending and reminders."
     },
@@ -1790,6 +1907,12 @@
       $("rm-title").focus();
     });
     $("btn-add-budget").addEventListener("click", openBudgetDialog);
+    $("bg-category").addEventListener("change", toggleBudgetName);
+    $("btn-import").addEventListener("click", function () {
+      $("file-import").value = "";
+      $("file-import").click();
+    });
+    $("file-import").addEventListener("change", importFile);
     $("btn-bg-cancel").addEventListener("click", function () {
       $("dlg-budget").close();
     });

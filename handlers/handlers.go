@@ -40,6 +40,11 @@ type Speaker interface {
 	Speak(ctx context.Context, text, voice string) ([]byte, error)
 }
 
+type IndicSpeaker interface {
+	Enabled() bool
+	Speak(ctx context.Context, text, lang string) ([]byte, error)
+}
+
 type Listener interface {
 	Enabled() bool
 	Transcribe(ctx context.Context, audio []byte, mime, hint string) (string, string, error)
@@ -49,6 +54,7 @@ type Server struct {
 	DB         Backend
 	Planner    ai.Planner
 	Speaker    Speaker
+	Indic      IndicSpeaker
 	Translator Translator
 	Listener   Listener
 	AIEnabled  bool
@@ -95,6 +101,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/budgets/{category}", s.putBudget)
 	mux.HandleFunc("DELETE /api/budgets/{category}", s.deleteBudget)
 	mux.HandleFunc("GET /api/export.csv", s.exportCSV)
+	mux.HandleFunc("POST /api/import", s.importCSV)
 	mux.HandleFunc("/", s.fallback)
 	return recoverer(s.log(), requestLog(s.log(), securityHeaders(mux)))
 }
@@ -172,6 +179,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		"db":     dbOK,
 		"ai":     s.AIEnabled,
 		"tts":    s.Speaker != nil && s.Speaker.Enabled(),
+		"indic":  s.Indic != nil && s.Indic.Enabled(),
 		"stt":    s.Listener != nil && s.Listener.Enabled(),
 		"voices": ai.SpeechVoices,
 		"model":  s.Model,
@@ -179,7 +187,9 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) categories(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"categories": models.Categories})
+	list := append([]string{}, models.Categories...)
+	list = append(list, actions.CustomBudgetNames(r.Context(), s.DB)...)
+	writeJSON(w, http.StatusOK, map[string]any{"categories": list})
 }
 
 type voiceRequest struct {
@@ -334,6 +344,7 @@ func (s *Server) voice(w http.ResponseWriter, r *http.Request) {
 		Expenses:  expenses,
 		Reminders: reminders,
 		History:   cleanHistory(req.History),
+		Custom:    actions.CustomBudgetNames(ctx, s.DB),
 	})
 	aiMs := time.Since(start).Milliseconds()
 	if err != nil {
@@ -475,10 +486,12 @@ func (s *Server) createExpense(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.nowFor(r, "")
+	rawCat := in.Category
 	if err := in.Validate(now); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	in.Category = actions.KeepCustom(r.Context(), s.DB, rawCat, in.Category)
 	e, err := s.DB.AddExpense(r.Context(), in, now)
 	if err != nil {
 		s.serverError(w, "create expense", err)
@@ -498,10 +511,12 @@ func (s *Server) updateExpense(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	rawCat := in.Category
 	if err := in.Validate(s.nowFor(r, "")); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	in.Category = actions.KeepCustom(r.Context(), s.DB, rawCat, in.Category)
 	e, err := s.DB.UpdateExpense(r.Context(), id, in)
 	if errors.Is(err, models.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "That expense no longer exists.")
@@ -651,6 +666,7 @@ func (s *Server) serverError(w http.ResponseWriter, what string, err error) {
 type speakRequest struct {
 	Text  string `json:"text"`
 	Voice string `json:"voice"`
+	Lang  string `json:"lang"`
 }
 
 const maxSpeakChars = 220
@@ -670,18 +686,32 @@ func (s *Server) speak(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "text is too long to speak")
 		return
 	}
-	if s.Speaker == nil || !s.Speaker.Enabled() {
+	indic := langHint(req.Lang) == "hi" || langHint(req.Lang) == "te"
+	if indic {
+		if s.Indic == nil || !s.Indic.Enabled() {
+			writeError(w, http.StatusServiceUnavailable, "The Hindi and Telugu voice is not set up on the server.")
+			return
+		}
+	} else if s.Speaker == nil || !s.Speaker.Enabled() {
 		writeError(w, http.StatusServiceUnavailable, "The natural voice is not set up on the server.")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
-	audio, err := s.Speaker.Speak(ctx, text, req.Voice)
+	var audio []byte
+	var err error
+	if indic {
+		audio, err = s.Indic.Speak(ctx, text, langHint(req.Lang))
+	} else {
+		audio, err = s.Speaker.Speak(ctx, text, req.Voice)
+	}
 	if err != nil {
 		s.log().Warn("speak failed", "err", err)
 		switch {
 		case errors.Is(err, ai.ErrBusy):
 			writeError(w, http.StatusServiceUnavailable, "The voice service is busy.")
+		case errors.Is(err, ai.ErrSpeechRefused) && indic:
+			writeError(w, http.StatusServiceUnavailable, "The Hindi and Telugu voice key was refused.")
 		case errors.Is(err, ai.ErrSpeechRefused):
 			writeError(w, http.StatusServiceUnavailable, "The voice model was refused. Open the Groq console, try the Orpheus voice model once and accept its terms.")
 		default:
@@ -728,8 +758,8 @@ func (s *Server) putBudget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteBudget(w http.ResponseWriter, r *http.Request) {
-	cat := strings.ToLower(strings.TrimSpace(r.PathValue("category")))
-	if cat != models.AllBudget && !models.ValidCategory(cat) {
+	cat := models.NormalizeName(r.PathValue("category"))
+	if cat != models.AllBudget && !models.ValidBudgetName(cat) {
 		writeError(w, http.StatusBadRequest, "That budget category does not exist.")
 		return
 	}

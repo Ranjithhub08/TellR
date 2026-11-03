@@ -112,9 +112,11 @@ func apply(ctx context.Context, r Repo, a Action, now time.Time, out *Outcome) (
 			Note:     a.Note,
 			SpentOn:  resolveDate(a.Date, now),
 		}
+		rawCat := in.Category
 		if err := in.Validate(now); err != nil {
 			return "", userErr("I couldn't add that expense: " + speakable(err) + ".")
 		}
+		in.Category = KeepCustom(ctx, r, rawCat, in.Category)
 		e, err := r.AddExpense(ctx, in, now)
 		if err != nil {
 			return "", err
@@ -174,7 +176,7 @@ func apply(ctx context.Context, r Repo, a Action, now time.Time, out *Outcome) (
 		}
 		cat := strings.ToLower(strings.TrimSpace(a.Category))
 		query := strings.ToLower(strings.TrimSpace(a.Query))
-		if cat != "" && !models.ValidCategory(cat) {
+		if cat != "" && !models.ValidCategory(cat) && KeepCustom(ctx, r, cat, "other") != NormalizeCat(cat) {
 			query = strings.TrimSpace(cat + " " + query)
 			cat = ""
 		}
@@ -187,7 +189,7 @@ func apply(ctx context.Context, r Repo, a Action, now time.Time, out *Outcome) (
 		default:
 			f, t, err := models.PeriodRange(period, now)
 			if err != nil {
-				return "", userErr("I can only look at today, this week or this month.")
+				return "", userErr("I can only look at today, the last 7 days, this month, or week 1 to 4 of this month.")
 			}
 			from, to = f, t
 		}
@@ -287,7 +289,7 @@ func apply(ctx context.Context, r Repo, a Action, now time.Time, out *Outcome) (
 			period = "today"
 		}
 		if _, _, err := models.PeriodRange(period, now); err != nil {
-			return "", userErr("I can only summarise today, this week or this month.")
+			return "", userErr("I can only summarise today, the last 7 days, this month, or week 1 to 4 of this month.")
 		}
 		s, err := LoadSummary(ctx, r, period, now)
 		if err != nil {
@@ -402,9 +404,11 @@ func apply(ctx context.Context, r Repo, a Action, now time.Time, out *Outcome) (
 		if !changed {
 			return "", userErr("What should I change about that expense?")
 		}
+		rawCat := in.Category
 		if err := in.Validate(now); err != nil {
 			return "", userErr("I couldn't change that expense: " + speakable(err) + ".")
 		}
+		in.Category = KeepCustom(ctx, r, rawCat, in.Category)
 		u, err := r.UpdateExpense(ctx, id, in)
 		if err != nil {
 			return "", err
@@ -501,6 +505,45 @@ func apply(ctx context.Context, r Repo, a Action, now time.Time, out *Outcome) (
 		out.Changed = true
 		out.Done = append(out.Done, a.Type)
 		return fmt.Sprintf("Removed the %s budget.", categoryLabel(cat)), nil
+
+	case TypeRenameBudget:
+		from := strings.ToLower(strings.TrimSpace(a.Category))
+		to := strings.ToLower(strings.TrimSpace(a.NewCat))
+		if from == "" || to == "" {
+			return "", userErr("Which budget should change, and to what category?")
+		}
+		if from == to {
+			return "", userErr("That budget is already " + categoryLabel(to) + ".")
+		}
+		to = models.NormalizeName(to)
+		if to != models.AllBudget && !models.ValidBudgetName(to) {
+			return "", userErr("That budget name is not valid. Use 1 to 24 letters, numbers or spaces.")
+		}
+		list, err := r.ListBudgets(ctx)
+		if err != nil {
+			return "", err
+		}
+		var old *models.Budget
+		for i := range list {
+			if list[i].Category == to {
+				return "", userErr("You already have a " + categoryLabel(to) + " budget. Remove it first, or just change its amount.")
+			}
+			if list[i].Category == from {
+				old = &list[i]
+			}
+		}
+		if old == nil {
+			return "", userErr("You don't have a " + categoryLabel(from) + " budget to change.")
+		}
+		if _, err := r.SetBudget(ctx, models.BudgetInput{Category: to, Limit: old.Limit}, now); err != nil {
+			return "", userErr("I couldn't move that budget: " + err.Error() + ".")
+		}
+		if err := r.DeleteBudget(ctx, from); err != nil {
+			return "", err
+		}
+		out.Changed = true
+		out.Done = append(out.Done, a.Type)
+		return fmt.Sprintf("Done. The %s budget of %s a month is now a %s budget.", categoryLabel(from), money(old.Limit), categoryLabel(to)), nil
 
 	case TypeListBudgets:
 		statuses, err := BudgetStatuses(ctx, r, now)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -22,7 +23,7 @@ var ErrNotFound = errors.New("not found")
 
 var Categories = []string{
 	"food", "groceries", "transport", "travel", "shopping",
-	"bills", "health", "entertainment", "education", "other",
+	"bills", "health", "gym", "entertainment", "education", "other",
 }
 
 func validCategory(c string) bool {
@@ -36,6 +37,16 @@ func validCategory(c string) bool {
 
 func ValidCategory(c string) bool {
 	return validCategory(c)
+}
+
+var budgetNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9 -]{0,23}$`)
+
+func NormalizeName(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+}
+
+func ValidBudgetName(c string) bool {
+	return validCategory(c) || (c != AllBudget && budgetNamePattern.MatchString(c))
 }
 
 type Expense struct {
@@ -209,7 +220,36 @@ func PeriodRange(period string, now time.Time) (string, string, error) {
 		first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		return first.Format(DateLayout), to, nil
 	}
-	return "", "", errors.New("period must be one of: today, week, month")
+	if n := weekNumber(period); n > 0 {
+		f, t := weekRange(n, now)
+		return f, t, nil
+	}
+	return "", "", errors.New("period must be one of: today, week, month, week1, week2, week3, week4")
+}
+
+func weekNumber(period string) int {
+	switch period {
+	case "week1":
+		return 1
+	case "week2":
+		return 2
+	case "week3":
+		return 3
+	case "week4":
+		return 4
+	}
+	return 0
+}
+
+func weekRange(n int, now time.Time) (string, string) {
+	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	start := first.AddDate(0, 0, (n-1)*7)
+	end := start.AddDate(0, 0, 6)
+	last := first.AddDate(0, 1, -1)
+	if n == 4 || end.After(last) {
+		end = last
+	}
+	return start.Format(DateLayout), end.Format(DateLayout)
 }
 
 var Repeats = []string{"daily", "weekly", "monthly"}
@@ -285,8 +325,9 @@ func (in *BudgetInput) Validate() error {
 	if in.Category == "" || in.Category == "overall" || in.Category == "total" || in.Category == "everything" {
 		in.Category = AllBudget
 	}
-	if in.Category != AllBudget && !validCategory(in.Category) {
-		return errors.New("budget category must be one of the expense categories, or all")
+	in.Category = NormalizeName(in.Category)
+	if in.Category != AllBudget && !ValidBudgetName(in.Category) {
+		return errors.New("budget name must be 1 to 24 letters, numbers, spaces or hyphens")
 	}
 	if math.IsNaN(in.Limit) || math.IsInf(in.Limit, 0) || in.Limit <= 0 {
 		return errors.New("budget must be greater than zero")
@@ -305,6 +346,9 @@ func PreviousRange(period string, now time.Time) (string, string, bool) {
 		return y, y, true
 	case "week":
 		return now.AddDate(0, 0, -13).Format(DateLayout), now.AddDate(0, 0, -7).Format(DateLayout), true
+	case "week2", "week3", "week4":
+		f, t := weekRange(weekNumber(period)-1, now)
+		return f, t, true
 	case "month":
 		firstThis := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		firstPrev := firstThis.AddDate(0, -1, 0)

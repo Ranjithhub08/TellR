@@ -34,6 +34,7 @@ type Request struct {
 	Expenses  []models.Expense
 	Reminders []models.Reminder
 	History   []Turn
+	Custom    []string
 }
 
 type Planner interface {
@@ -74,7 +75,7 @@ func (c *Client) Plan(ctx context.Context, req Request) (actions.Plan, error) {
 	if text == "" {
 		return actions.Plan{}, ErrBadOutput
 	}
-	system := BuildSystemPrompt(req.Now, req.TZ, req.Expenses, req.Reminders) + HistoryBlock(req.History)
+	system := BuildSystemPrompt(req.Now, req.TZ, req.Expenses, req.Reminders) + customBlock(req.Custom) + HistoryBlock(req.History)
 	msgs := []message{
 		{Role: "system", Content: system},
 		{Role: "user", Content: "<speech>" + text + "</speech>"},

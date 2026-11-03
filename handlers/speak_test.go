@@ -159,3 +159,51 @@ func TestConfirmPromptAndDeleteReplyAreTranslated(t *testing.T) {
 		t.Fatalf("confirm: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+type fakeIndic struct {
+	on    bool
+	audio []byte
+	err   error
+	text  string
+	lang  string
+}
+
+func (f *fakeIndic) Enabled() bool { return f.on }
+
+func (f *fakeIndic) Speak(ctx context.Context, text, lang string) ([]byte, error) {
+	f.text, f.lang = text, lang
+	return f.audio, f.err
+}
+
+func TestSpeakRoutesIndianLanguagesToIndicVoice(t *testing.T) {
+	e := newEnv(t)
+	sp := &fakeSpeaker{on: true, audio: []byte("ENGLISH")}
+	ind := &fakeIndic{on: true, audio: []byte("TELUGU")}
+	e.srv.Speaker = sp
+	e.srv.Indic = ind
+	rec := e.do("POST", "/api/speak", `{"text":"నమస్కారం","lang":"te-IN"}`)
+	if rec.Code != 200 || rec.Body.String() != "TELUGU" || ind.lang != "te" || sp.text != "" {
+		t.Fatalf("code=%d body=%q lang=%q english=%q", rec.Code, rec.Body.String(), ind.lang, sp.text)
+	}
+	rec = e.do("POST", "/api/speak", `{"text":"hello","voice":"hannah"}`)
+	if rec.Code != 200 || rec.Body.String() != "ENGLISH" || ind.text != "నమస్కారం" {
+		t.Fatalf("english path: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+	health := expect(t, e.do("GET", "/api/health", ""), 200)
+	if health["indic"] != true {
+		t.Fatalf("health: %v", health)
+	}
+}
+
+func TestSpeakIndicUnavailableAndRefused(t *testing.T) {
+	e := newEnv(t)
+	e.srv.Speaker = &fakeSpeaker{on: true, audio: []byte("E")}
+	expect(t, e.do("POST", "/api/speak", `{"text":"नमस्ते","lang":"hi"}`), 503)
+	e.srv.Indic = &fakeIndic{on: true, err: ai.ErrSpeechRefused}
+	m := expect(t, e.do("POST", "/api/speak", `{"text":"नमस्ते","lang":"hi"}`), 503)
+	if s, _ := m["error"].(string); !strings.Contains(s, "Hindi and Telugu") {
+		t.Fatalf("error text: %v", m)
+	}
+	e.srv.Indic = &fakeIndic{on: true, err: ai.ErrBusy}
+	expect(t, e.do("POST", "/api/speak", `{"text":"नमस्ते","lang":"hi"}`), 503)
+}

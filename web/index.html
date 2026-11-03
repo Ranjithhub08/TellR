@@ -72,7 +72,7 @@
         </div>
       </details>
 
-      <section class="slips" aria-label="History">
+      <section class="slips" aria-label="History" hidden>
         <div class="slips-head">
           <h2>History</h2>
           <button id="btn-clear-log" class="link-btn" type="button">Clear</button>
@@ -102,7 +102,7 @@
           </label>
           <label class="check"><input id="keep" type="checkbox"> <span data-i18n="keep">Keep the conversation going</span></label>
           <label class="check"><input id="mute" type="checkbox"> <span data-i18n="mute">Mute spoken replies</span></label>
-          <p id="lang-note" class="note" data-i18n="note" hidden>TellR will reply in the language you speak. Hindi and Telugu replies use a voice installed on this device.</p>
+          <p id="lang-note" class="note" data-i18n="note" hidden>TellR will reply in the language you speak. Hindi and Telugu replies use a natural Indian voice when it is set up, otherwise a voice on this device.</p>
           <p id="support-note" class="note" hidden>Voice input needs Chrome or Edge. You can still type.</p>
         </div>
       </details>
@@ -127,13 +127,18 @@
           <h2 id="sum-h">Spent</h2>
           <div id="period-tabs" class="tabs" role="group" aria-label="Period">
             <button type="button" class="tab" data-period="today" aria-pressed="true">Today</button>
-            <button type="button" class="tab" data-period="week" aria-pressed="false">7 days</button>
+            <button type="button" class="tab" data-period="week" aria-pressed="false">Last 7 days</button>
             <button type="button" class="tab" data-period="month" aria-pressed="false">This month</button>
+            <button type="button" class="tab" data-period="week1" aria-pressed="false">Week 1</button>
+            <button type="button" class="tab" data-period="week2" aria-pressed="false">Week 2</button>
+            <button type="button" class="tab" data-period="week3" aria-pressed="false">Week 3</button>
+            <button type="button" class="tab" data-period="week4" aria-pressed="false">Week 4</button>
           </div>
         </div>
         <div class="spend-body">
           <div class="total-block">
             <p id="sum-total" class="sum-total">₹0</p>
+            <p id="sum-range" class="sum-range"></p>
             <p class="sum-meta"><span id="sum-count">0</span> expenses · <span id="sum-rem">0</span> reminders open</p>
             <p id="sum-compare" class="compare" hidden></p>
           </div>
@@ -165,12 +170,15 @@
         <section class="col" aria-labelledby="ex-h">
           <div class="col-head">
             <h2 id="ex-h">Expenses</h2>
+            <button id="btn-import" class="btn small" type="button">Import CSV</button>
+            <input id="file-import" type="file" accept=".csv,text/csv" hidden>
             <a id="btn-export" class="btn small" href="/api/export.csv" download>Export CSV</a>
             <button id="btn-add-expense" class="btn primary small" type="button">Add expense</button>
           </div>
           <label class="sr-only" for="ex-search">Search expenses</label>
           <input id="ex-search" class="search" type="search" maxlength="60" autocomplete="off" placeholder="Search expenses">
-          <ul id="expense-list" class="list"></ul>
+          <div class="thead" aria-hidden="true"><span>Date</span><span>Details</span><span>Amount</span><span></span></div>
+          <ul id="expense-list" class="list scroll"></ul>
           <p id="ex-empty" class="empty" hidden>No expenses yet. Tap the mic and say what you spent.</p>
         </section>
 
@@ -180,7 +188,7 @@
             <label class="check small-check"><input id="rm-showdone" type="checkbox"> Show done</label>
             <button id="btn-add-reminder" class="btn primary small" type="button">Add reminder</button>
           </div>
-          <ul id="reminder-list" class="list"></ul>
+          <ul id="reminder-list" class="list scroll"></ul>
           <p id="rm-empty" class="empty" hidden>No reminders. Say “remind me to pay rent on Friday”.</p>
         </section>
       </div>
@@ -262,6 +270,10 @@
       <label class="field">
         <span>For</span>
         <select id="bg-category"></select>
+      </label>
+      <label class="field" id="bg-name-wrap" hidden>
+        <span>Budget name</span>
+        <input id="bg-name" type="text" maxlength="24" autocomplete="off" placeholder="e.g. pets, rent, trip">
       </label>
       <label class="field">
         <span>Limit per month (₹)</span>

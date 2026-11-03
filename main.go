@@ -54,13 +54,19 @@ func run(log *slog.Logger) error {
 
 	client := ai.NewClient(cfg.BaseURL, cfg.APIKey, cfg.Model)
 	speech := ai.NewSpeech(cfg.BaseURL, cfg.APIKey, cfg.TTSModel, cfg.TTSVoice)
-	transcriber := ai.NewTranscriber(cfg.BaseURL, cfg.APIKey, cfg.STTModel)
+	indic := ai.NewIndicSpeech("https://api.sarvam.ai", cfg.SarvamKey, cfg.SarvamModel, cfg.SarvamVoice)
+	transcriber := ai.NewTranscriber(cfg.BaseURL, cfg.APIKey, cfg.STTModel).WithIndicModel(cfg.STTIndic)
+	transcriber.Log = log
+	if cfg.SarvamKey != "" {
+		transcriber.Sarvam = ai.NewSarvamSTT("https://api.sarvam.ai", cfg.SarvamKey, cfg.SarvamSTT)
+	}
 	srv := &handlers.Server{
 		DB:         backend{st},
 		Planner:    client,
 		Speaker:    speech,
 		Translator: client,
 		Listener:   transcriber,
+		Indic:      indic,
 		AIEnabled:  client.Enabled(),
 		Model:      cfg.Model,
 		Confirms:   confirm.New(2 * time.Minute),

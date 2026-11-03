@@ -14,6 +14,11 @@ type config struct {
 	TTSModel    string
 	TTSVoice    string
 	STTModel    string
+	STTIndic    string
+	SarvamKey   string
+	SarvamSTT   string
+	SarvamModel string
+	SarvamVoice string
 	TrustProxy  bool
 	VoicePerMin int
 	IPPerMin    int
@@ -29,6 +34,11 @@ func loadConfig(get func(string) string) config {
 		TTSModel:    orDefault(get("GROQ_TTS_MODEL"), "canopylabs/orpheus-v1-english"),
 		TTSVoice:    orDefault(get("GROQ_TTS_VOICE"), "hannah"),
 		STTModel:    orDefault(get("GROQ_STT_MODEL"), "whisper-large-v3-turbo"),
+		STTIndic:    orDefault(get("GROQ_STT_INDIC_MODEL"), "whisper-large-v3"),
+		SarvamSTT:   orDefault(get("SARVAM_STT_MODEL"), "saaras:v4"),
+		SarvamKey:   strings.TrimSpace(get("SARVAM_API_KEY")),
+		SarvamModel: orDefault(get("SARVAM_MODEL"), "bulbul:v3"),
+		SarvamVoice: orDefault(get("SARVAM_SPEAKER"), "priya"),
 		TrustProxy:  strings.EqualFold(strings.TrimSpace(get("TRUSTED_PROXY")), "true"),
 		VoicePerMin: positiveInt(get("VOICE_PER_MIN"), 30),
 		IPPerMin:    positiveInt(get("IP_PER_MIN"), 12),

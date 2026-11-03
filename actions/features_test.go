@@ -60,7 +60,7 @@ func TestSetBudgetRejectsBadInput(t *testing.T) {
 	_, x := newExec()
 	for _, a := range []Action{
 		{Type: TypeSetBudget, Category: "food"},
-		{Type: TypeSetBudget, Category: "pets", Amount: 100},
+		{Type: TypeSetBudget, Category: "bad!name", Amount: 100},
 		{Type: TypeSetBudget, Category: "food", Amount: -5},
 	} {
 		_, err := run(t, x, a)
@@ -272,4 +272,58 @@ func TestBudgetStatusesUseMonthToDate(t *testing.T) {
 		t.Fatalf("st=%+v err=%v", st, err)
 	}
 	_ = models.AllBudget
+}
+
+func TestRenameBudgetHealthToGym(t *testing.T) {
+	_, x := newExec()
+	run(t, x, Action{Type: TypeSetBudget, Category: "health", Amount: 3000})
+	out, err := run(t, x, Action{Type: TypeRenameBudget, Category: "health", NewCat: "gym"})
+	if err != nil || !out.Changed || !strings.Contains(out.Reply, "health budget of") || !strings.Contains(out.Reply, "gym budget") {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+	list, _ := run(t, x, Action{Type: TypeListBudgets})
+	if len(list.View.Budgets) != 1 || list.View.Budgets[0].Category != "gym" || list.View.Budgets[0].Limit != 3000 {
+		t.Fatalf("budgets: %+v", list.View.Budgets)
+	}
+}
+
+func TestRenameBudgetRefusals(t *testing.T) {
+	_, x := newExec()
+	run(t, x, Action{Type: TypeSetBudget, Category: "health", Amount: 3000}, Action{Type: TypeSetBudget, Category: "gym", Amount: 500})
+	for _, a := range []Action{
+		{Type: TypeRenameBudget, Category: "health", NewCat: "gym"},
+		{Type: TypeRenameBudget, Category: "food", NewCat: "travel"},
+		{Type: TypeRenameBudget, Category: "health", NewCat: "bad!name"},
+		{Type: TypeRenameBudget, Category: "health", NewCat: "health"},
+		{Type: TypeRenameBudget, Category: "health"},
+	} {
+		_, err := run(t, x, a)
+		var ue *UserError
+		if !errors.As(err, &ue) {
+			t.Fatalf("%+v: got %v", a, err)
+		}
+	}
+	list, _ := run(t, x, Action{Type: TypeListBudgets})
+	if len(list.View.Budgets) != 2 {
+		t.Fatalf("nothing should change on refusal: %+v", list.View.Budgets)
+	}
+}
+
+func TestCustomBudgetCategoryKeptOnExpenses(t *testing.T) {
+	_, x := newExec()
+	run(t, x, Action{Type: TypeSetBudget, Category: "Pet Care", Amount: 2000})
+	run(t, x, Action{Type: TypeAddExpense, Amount: 300, Category: "pet care", Note: "dog food"})
+	run(t, x, Action{Type: TypeAddExpense, Amount: 100, Category: "mystery", Note: "x"})
+	out, _ := run(t, x, Action{Type: TypeListBudgets})
+	if len(out.View.Budgets) != 1 || out.View.Budgets[0].Category != "pet care" || out.View.Budgets[0].Spent != 300 {
+		t.Fatalf("budgets: %+v", out.View.Budgets)
+	}
+	out, _ = run(t, x, Action{Type: TypeListExpenses, Category: "pet care"})
+	if out.View == nil || len(out.View.Expenses) != 1 {
+		t.Fatalf("filter by custom category: %+v", out.View)
+	}
+	out, err := run(t, x, Action{Type: TypeRenameBudget, Category: "pet care", NewCat: "gym"})
+	if err != nil || !out.Changed {
+		t.Fatalf("rename to builtin: %+v %v", out, err)
+	}
 }

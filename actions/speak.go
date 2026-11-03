@@ -60,6 +60,9 @@ func expensePeriod(period string) string {
 	case "month":
 		return "this month"
 	}
+	if n := weekLabel(period); n != "" {
+		return "in " + n + " of this month"
+	}
 	return "today"
 }
 
@@ -70,7 +73,24 @@ func summaryPeriod(period string) string {
 	case "month":
 		return "This month"
 	}
+	if n := weekLabel(period); n != "" {
+		return "In " + n + " of this month"
+	}
 	return "Today"
+}
+
+func weekLabel(period string) string {
+	switch period {
+	case "week1":
+		return "week 1"
+	case "week2":
+		return "week 2"
+	case "week3":
+		return "week 3"
+	case "week4":
+		return "week 4"
+	}
+	return ""
 }
 
 func speakable(err error) string {
